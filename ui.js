@@ -17,13 +17,13 @@ function agora() {
 }
 const clone = o => JSON.parse(JSON.stringify(o));
 const CFG0 = { empregado: '', salarios: [{ desde: '2000-01', valor: 0 }], divisor: 200, fimExpediente: '16:00',
-  pct: { normal: 50, madrugada: 100, domingo: 100, feriado: 100 }, pisoNoturno: false, dsr: false, feriadosExtras: [], feriadosRemovidos: [], pagamentos: {} };
+  pct: { normal: 50, madrugada: 100, domingo: 100, feriado: 100 }, pisoNoturno: false, dsr: false, feriadosExtras: [], feriadosRemovidos: [], pagamentos: {}, totaisMes: {} };
 const merge = c => { const m = Object.assign(clone(CFG0), c || {}); m.pct = Object.assign(clone(CFG0.pct), (c && c.pct) || {}); return m; };
 
 const hoje0 = agora();
 const S = { cfg: merge(null), regs: {}, view: 'inicio', ym: hoje0.date.slice(0, 7), date: hoje0.date, perfil: 'empregador', draft: null, dirty: false, aviso: '', carregando: false, aberto: null };
 let _m = {};
-const M = ym => _m[ym] || (_m[ym] = E.calcMes(ym, S.regs, S.cfg));
+const M = ym => { if (_m[ym]) return _m[ym]; const m = E.calcMes(ym, S.regs, S.cfg), tm = (S.cfg.totaisMes || {})[ym]; if (tm) { m.tm = tm; m.t.min += tm.min; m.total = E.r2(m.total + tm.valor); } return (_m[ym] = m); };
 const invalidate = () => { _m = {}; };
 const moto = () => S.perfil === 'motorista';
 const nome1 = () => (S.cfg.empregado || '').trim().split(' ')[0] || 'Motorista';
@@ -114,9 +114,9 @@ function resumoLinhas(m) {
   const p = E.PCT(S.cfg);
   return `${lin('Horas a ' + p.normal + '% · ' + H(m.t.min50), brl(m.v50))}${lin('Horas a 100% · ' + H(m.t.min100), brl(m.v100))}
     ${m.compl ? lin('Complemento do piso noturno legal', brl(m.compl)) : ''}${m.compUsado ? lin('(−) Horas compensadas · ' + H(m.compUsado), brl(-m.vComp)) : ''}
-    ${S.cfg.dsr ? lin('DSR sobre horas extras', brl(m.dsr)) : ''}${lin('Total a pagar', brl(m.total), 'tot')}`;
+    ${S.cfg.dsr ? lin('DSR sobre horas extras', brl(m.dsr)) : ''}${m.tm ? lin('Total mensal informado, sem detalhe diário · ' + H(m.tm.min), brl(m.tm.valor)) : ''}${lin('Total a pagar', brl(m.total), 'tot')}`;
 }
-function difLegal(ym) { const c = Object.assign({}, S.cfg, { pisoNoturno: true, dsr: true }); return E.r2(E.calcMes(ym, S.regs, c).total - M(ym).total); }
+function difLegal(ym) { const c = Object.assign({}, S.cfg, { pisoNoturno: true, dsr: true }); return E.r2(E.calcMes(ym, S.regs, c).total - E.calcMes(ym, S.regs, S.cfg).total); }
 
 function vInicio() {
   const m = M(S.ym), t = agora(), pg = S.cfg.pagamentos[S.ym], pend = pendentes(), rHoje = S.regs[t.date];
@@ -199,7 +199,7 @@ function vCalendario() {
 }
 
 function mesesComDados() {
-  const ds = Object.keys(S.regs).sort(); const out = []; if (!ds.length) return out;
+  const ds = [...Object.keys(S.regs), ...Object.keys(S.cfg.totaisMes || {}).map(y => y + '-01')].sort(); const out = []; if (!ds.length) return out;
   const fim = agora().date.slice(0, 7); for (let ym = ds[0].slice(0, 7); ym <= fim && out.length < 120; ym = E.addMonths(ym, 1)) out.push(ym);
   return out.reverse();
 }
@@ -229,8 +229,14 @@ function vHistorico() {
         <div class="row" style="align-items:flex-end;margin-top:8px"><div class="f" style="margin:0"><label for="pg-${ym}">Data do pagamento</label><input type="date" id="pg-${ym}" value="${pg.data || ''}" max="${hj}"></div><button class="btn sec" data-act="pagar" data-ym="${ym}" data-manter="1">Salvar data</button></div>
         <button class="btn pg sm" data-act="despagar" data-ym="${ym}" style="margin-top:8px">Desfazer pagamento</button>`
       : `<div class="row" style="align-items:flex-end;margin-top:8px"><div class="f" style="margin:0"><label for="pg-${ym}">Data do pagamento</label><input type="date" id="pg-${ym}" value="${hj}" max="${hj}"></div><button class="btn" data-act="pagar" data-ym="${ym}" ${m.t.pend ? 'disabled' : ''}>Confirmar ${brl(m.total)}</button></div>${m.t.pend ? '<p class="nota">Aprove os ' + m.t.pend + ' lançamento(s) pendentes deste mês antes de confirmar.</p>' : ''}`}
+      ${m.tm ? `<p class="muted" style="margin:10px 0 0">Este mês tem um total informado sem detalhe diário (${H(m.tm.min)}, ${brl(m.tm.valor)}). <button class="btn sec sm" data-act="tot-del" data-ym="${ym}">Remover total</button></p>` : ''}
       <h2 style="margin-top:14px">Dia a dia</h2>${tabelaDias(m)}
       <div class="row" style="margin-top:10px">${pdf ? `<button class="btn sec sm" data-act="rel" data-ym="${ym}" data-f="pdf">Extrato em PDF</button>` : ''}<button class="btn sec sm" data-act="rel" data-ym="${ym}" data-f="csv">Extrato em CSV</button></div>` : ''}</details>`; }).join('') : '<p class="muted" style="margin:0">Ainda não há horas extras lançadas.</p>'}</div>
+  <div class="card"><details><summary>Registrar um mês passado só pelo total <span class="muted">abrir</span></summary>
+    <div class="row" style="margin-top:10px"><div class="f"><label for="t-ym">Mês</label><input type="month" id="t-ym" max="${agora().date.slice(0, 7)}"></div><div class="f"><label for="t-h">Horas extras (ex.: 53:00)</label><input id="t-h" inputmode="numeric" placeholder="00:00"></div></div>
+    <div class="f"><label for="t-v">Valor total (R$)</label><input id="t-v" inputmode="decimal" placeholder="0,00"></div>
+    <div class="chk"><input type="checkbox" id="t-p" checked><label for="t-p">Mês já pago<small>Fica registrado como quitado, sem data de pagamento.</small></label></div>
+    <button class="btn sec full" data-act="tot-add">Registrar total do mês</button><p class="nota">Use para meses antigos sem os horários de cada dia. O valor entra como informado, sem recálculo.</p></details></div>
   ${comValor.length ? '<button class="btn sec full" data-act="rel" data-ym="todos" data-f="csv">Exportar histórico completo (CSV)</button><p class="nota">Toque em um mês para ver os dias e confirmar o pagamento. Toque em um dia para abrir o lançamento.</p>' : ''}`;
 }
 
@@ -289,7 +295,7 @@ function render() {
     ${S.aviso ? alerta({ nivel: 'vermelho', txt: S.aviso }) : ''}${S.carregando ? '<p class="muted">Carregando dados…</p>' : ''}${v[1]()}`;
   $('nav.bot div').innerHTML = Object.keys(VIEWS).map(k => `<button data-act="ir" data-v="${k}" class="${S.view === k ? 'on' : ''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>${k === 'gestao' && moto() ? 'Histórico' : VIEWS[k][0]}${k === 'gestao' && !moto() && pendentes().length ? ' (' + pendentes().length + ')' : ''}</button>`).join('');
 }
-const _render = render; render = function () { _render(); ofereceImport(); };
+const _render = render; render = function () { _render(); ofereceImport(); ofereceTot(); };
 function ir(v) { S.view = v; S.dirty = false; if (v !== 'lancar') S.draft = null; try { if (location.hash !== '#' + v) location.hash = v; } catch (e) { } render(); window.scrollTo(0, 0); }
 
 async function exportar(ym, fmt) {
@@ -299,6 +305,7 @@ async function exportar(ym, fmt) {
   const head = ['Data', 'Dia', 'Períodos', 'Horas 50%', 'Horas 100%', 'Descontar', 'Valor (R$)', 'Situação', 'Motivo', 'O que foi feito'], rows = [];
   for (const y of ms) { const m = M(y);
     for (const x of m.dias) if (x.res && (x.res.min || x.res.comp)) rows.push([dBR(x.date), DS[E.dow(x.date)], pers(x.rec), H(x.res.min50), H(x.res.min100), x.res.comp ? H(x.res.comp) : '', num(x.res.total), x.rec.status === 'pendente' ? 'Pendente' : 'Aprovado', x.rec.motivo || '', x.rec.obs || '']);
+    if (m.tm) rows.push(['Total mensal informado', '', 'sem detalhe diário', H(m.tm.min), '', '', num(m.tm.valor), '', '', '']);
     rows.push(['Total ' + mesNome(y), '', '', H(m.t.min50), H(m.t.min100), m.compUsado ? H(m.compUsado) : '', num(m.total), S.cfg.pagamentos[y] ? 'Pago em ' + pgTxt(S.cfg.pagamentos[y]) : 'Em aberto', m.dsr ? 'inclui DSR de ' + num(m.dsr) : '', '']); }
   const q = v => { v = String(v == null ? '' : v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   const csv = '﻿' + [...cab, head, ...rows].map(l => l.map(q).join(';')).join('\r\n'), arq = 'horas-extras-' + (todos ? 'historico' : ym);
@@ -326,6 +333,17 @@ async function importarDados(j) {
 }
 async function importar(file) {
   try { const n = await importarDados(JSON.parse(await file.text())); toast(n + ' lançamentos importados.'); render(); } catch (e) { toast('Arquivo inválido ou sem permissão para importar.'); }
+}
+function registrarTotais(l) {
+  const t = agora();
+  for (const x of l) { S.cfg.totaisMes[x.ym] = { min: x.min, valor: x.valor, registradoEm: t.iso }; invalidate(); if (x.pago) S.cfg.pagamentos[x.ym] = { valor: M(x.ym).total, registradoEm: t.iso }; }
+  Store.saveCfg();
+}
+function lerTot(h) { const m = /^#tot-([A-Za-z0-9_-]+)$/.exec(h || ''); if (!m) return null; try { const l = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))); return Array.isArray(l) && l.every(x => /^\d{4}-\d\d$/.test(x.ym) && x.min >= 0 && x.valor >= 0) ? l : null; } catch (e) { return null; } }
+let TOT = lerTot(location.hash);
+function ofereceTot() {
+  if (!TOT || Store.fase !== 'ok' || !Store.dono || $('#modal').classList.contains('on')) return;
+  modal('<h2 style="margin:0 0 10px">Registrar totais mensais</h2>' + TOT.map(x => lin(mesNome(x.ym) + ' · ' + H(x.min) + (x.pago ? ' · pago' : ''), brl(x.valor))).join('') + '<div class="row" style="margin-top:12px"><button class="btn" data-act="tot-link">Registrar</button><button class="btn sec" data-act="tot-nao">Agora não</button></div>');
 }
 // Importação por link: o histórico fica cifrado (AES-256-GCM) e a chave vem só no link, que não é enviado a nenhum servidor.
 let IMP_KEY = (location.hash.match(/^#imp-([A-Za-z0-9_-]{40,})$/) || [])[1] || '';
@@ -388,6 +406,9 @@ const ACT = {
   liberar: el => { const a = clone(Store.acesso), u = el.dataset.u; a.motoristas = [...new Set([...(a.motoristas || []), u])]; a.emails = Object.assign({}, a.emails, { [u]: el.dataset.e }); Store.fs.doc('config/acesso').set(a).then(() => Store.fs.doc('pedidos/' + u).delete()).then(() => toast('Acesso liberado.')).catch(() => toast('Não foi possível liberar.')); },
   revogar: el => { const a = clone(Store.acesso), u = el.dataset.u; a.motoristas = (a.motoristas || []).filter(x => x !== u); Store.fs.doc('config/acesso').set(a).then(() => toast('Acesso removido.')); },
   'ver-pedidos': () => Store.fs.collection('pedidos').get().then(q => { const l = []; q.forEach(d => l.push(Object.assign({ uid: d.id }, d.data()))); Store.pedidos = l; Store.pedErro = ''; toast(l.length ? l.length + ' pedido(s) encontrado(s).' : 'Nenhum pedido de acesso encontrado.'); render(); }).catch(e => { Store.pedErro = (e && e.code) || 'erro'; toast('Erro ao ler pedidos: ' + Store.pedErro); render(); }),
+  'tot-add': () => { const ym = $('#t-ym').value, h = /^(\d{1,3})[:h](\d{2})$/.exec($('#t-h').value.trim()), v = dec($('#t-v').value); if (!ym) return toast('Escolha o mês.'); if (!h) return toast('Informe as horas no formato 53:00.'); if (!(v > 0)) return toast('Informe o valor total.'); registrarTotais([{ ym, min: +h[1] * 60 + +h[2], valor: v, pago: $('#t-p').checked }]); toast('Total de ' + mesNome(ym).toLowerCase() + ' registrado.'); render(); },
+  'tot-del': el => { delete S.cfg.totaisMes[el.dataset.ym]; Store.saveCfg(); toast('Total removido.'); render(); },
+  'tot-link': () => { const l = TOT; TOT = null; closeModal(); registrarTotais(l); toast(l.length + ' mês(es) registrado(s).'); S.view = 'gestao'; render(); }, 'tot-nao': () => { TOT = null; closeModal(); },
   'imp-link': importarLink, 'imp-nao': () => { IMP_KEY = ''; closeModal(); },
   backup: () => Store.dl.save({ filename: 'horas-extras-backup-' + agora().date + '.json', data: JSON.stringify({ cfg: S.cfg, regs: Object.values(S.regs) }) }),
   'copiar-link': async () => { try { await navigator.clipboard.writeText(APP_URL); toast('Link copiado.'); } catch (e) { toast('Copie o link mostrado abaixo.'); } },
@@ -420,7 +441,7 @@ const onInput = e => {
   if (el.dataset.k) { lerForm(); S.dirty = true; const p = $('#preview'); if (p) p.innerHTML = previewHTML(S.draft); }
 };
 document.addEventListener('input', onInput); document.addEventListener('change', onInput);
-window.addEventListener('hashchange', () => { const mk = location.hash.match(/^#imp-([A-Za-z0-9_-]{40,})$/); if (mk) { IMP_KEY = mk[1]; try { location.hash = 'inicio'; } catch (e) { } return render(); } const v = location.hash.slice(1); if (VIEWS[v] && v !== S.view) { S.view = v; S.dirty = false; render(); } });
+window.addEventListener('hashchange', () => { const tl = lerTot(location.hash); if (tl) { TOT = tl; try { location.hash = 'inicio'; } catch (e) { } return render(); } const mk = location.hash.match(/^#imp-([A-Za-z0-9_-]{40,})$/); if (mk) { IMP_KEY = mk[1]; try { location.hash = 'inicio'; } catch (e) { } return render(); } const v = location.hash.slice(1); if (VIEWS[v] && v !== S.view) { S.view = v; S.dirty = false; render(); } });
 try { const t = localStorage.getItem('he.tema'); document.documentElement.dataset.tema = t || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'escuro' : 'claro'); } catch (e) { }
 { const v = location.hash.slice(1); if (VIEWS[v]) S.view = v; else if (v === 'historico') S.view = 'gestao'; }
 window.__he = { S, Store, render, invalidate };
