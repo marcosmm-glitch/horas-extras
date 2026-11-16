@@ -50,7 +50,7 @@ const Store = {
     if (!a) this.fase = 'primeiro';
     else if (a.empregador === u) { if (!this.dono) S.perfil = 'empregador'; this.dono = true; this.fase = 'ok'; this.iniciar(); }
     else if ((a.motoristas || []).includes(u)) { this.dono = false; S.perfil = 'motorista'; this.fase = 'ok'; this.iniciar(); }
-    else { this.fase = 'aguardando'; if (this.dados) { this.dados.forEach(f => f()); this.dados = null; } if (this.pediu !== u) { this.pediu = u; this.fs.doc('pedidos/' + u).set({ email: this.user.email || '', em: agora().iso }).catch(() => { }); } }
+    else { this.fase = 'aguardando'; if (this.dados) { this.dados.forEach(f => f()); this.dados = null; } if (this.pediu !== u) { this.pediu = u; this.fs.doc('pedidos/' + u).set({ email: this.user.email || '', em: agora().iso }).then(() => { this.pedOk = true; refresh(); }).catch(e => { this.pedErro = (e && e.code) || 'erro'; refresh(); }); } }
     refresh();
   },
   iniciar() {
@@ -60,7 +60,7 @@ const Store = {
       this.fs.doc('config/he').onSnapshot(s => { if (s.exists) S.cfg = merge(clone(s.data())); invalidate(); refresh(); }, e => this.falha(e)),
       this.fs.collection('he').orderBy('date', 'desc').limit(1500).onSnapshot(q => { const m = {}; q.forEach(d => { m[d.id] = clone(d.data()); }); S.regs = m; S.carregando = false; S.aviso = ''; invalidate(); refresh(); }, e => this.falha(e))
     ];
-    if (this.dono) this.dados.push(this.fs.collection('pedidos').onSnapshot(q => { const l = []; q.forEach(d => l.push(Object.assign({ uid: d.id }, d.data()))); this.pedidos = l; refresh(); }, () => { }));
+    if (this.dono) this.dados.push(this.fs.collection('pedidos').onSnapshot(q => { const l = []; q.forEach(d => l.push(Object.assign({ uid: d.id }, d.data()))); this.pedidos = l; this.pedErro = ''; refresh(); }, e => { this.pedErro = (e && e.code) || 'erro'; refresh(); }));
   },
   write(path, data) { return this.fs.doc(path).set(clone(data)).catch(e => { toast(e && e.code === 'permission-denied' ? 'Este acesso não tem permissão para esta alteração.' : 'Não foi possível salvar. Verifique a conexão.'); }); },
   saveReg(rec) { S.regs[rec.date] = rec; invalidate(); return this.write('he/' + rec.date, rec); },
@@ -72,7 +72,7 @@ function vPortao() {
   if (f === 'semconfig') return cx('<h2>Configuração pendente</h2><p>O app ainda não está ligado ao banco de dados. Falta preencher o arquivo <b>config.js</b> com os dados do projeto Firebase.</p>');
   if (f === 'carregando') return cx('<p class="muted" style="margin:0">Carregando…</p>');
   if (f === 'primeiro') return cx(`<h2>Primeiro acesso</h2><p>Este app ainda não tem um responsável. Se você é o empregador, assuma o controle agora. Depois disso, só você libera outros acessos.</p><button class="btn full" data-act="assumir">Sou o empregador: assumir o controle</button><button class="btn sec full" data-act="sair" style="margin-top:8px">Sair</button>`);
-  if (f === 'aguardando') return cx(`<h2>Aguardando liberação</h2><p>Sua conta <b>${esc(Store.user.email || '')}</b> foi criada. Avise o empregador para liberar o seu acesso; esta tela abre sozinha quando ele liberar.</p><button class="btn sec full" data-act="sair">Sair</button>`);
+  if (f === 'aguardando') return cx(`<h2>Aguardando liberação</h2><p>Sua conta <b>${esc(Store.user.email || '')}</b> foi criada. Avise o empregador para liberar o seu acesso; esta tela abre sozinha quando ele liberar.</p>${Store.pedErro ? alerta({ nivel: 'vermelho', txt: 'O pedido de acesso não foi enviado (' + Store.pedErro + ').' }) : Store.pedOk ? '<p class="muted">Pedido de acesso enviado.</p>' : ''}<button class="btn sec full" data-act="repedir" style="margin-bottom:8px">Enviar o pedido de novo</button><button class="btn sec full" data-act="sair">Sair</button>`);
   return cx(`<h2>Entrar</h2><form id="form-login"><div class="f"><label for="a-email">E-mail</label><input id="a-email" type="email" autocomplete="username" inputmode="email"></div><div class="f"><label for="a-senha">Senha</label><input id="a-senha" type="password" autocomplete="current-password"></div>
     <button class="btn full" data-act="entrar">Entrar</button><button class="btn sec full" data-act="criar" style="margin-top:8px">Criar conta</button><button class="btn sec full sm" data-act="reset" style="margin-top:8px;border:0">Esqueci a senha</button></form>`);
 }
@@ -260,8 +260,11 @@ function vAjustes() {
     <div class="row" style="margin-top:10px"><div class="f"><label for="f-d">Data</label><input type="date" id="f-d"></div><div class="f"><label for="f-n">Nome</label><input id="f-n" placeholder="Ex.: feriado municipal"></div></div>
     <button class="btn sec full" data-act="fer-add">Adicionar feriado</button><p class="nota">Nacionais, 9 de julho (SP) e os municipais de São Paulo. Pontos facultativos não entram.</p></div>
   <div class="card"><h2>Acessos</h2>
+    <p class="muted" style="margin:0 0 10px">Você está como <b>${esc((Store.user && Store.user.email) || '')}</b> (empregador).</p>
+    ${Store.pedErro ? alerta({ nivel: 'vermelho', txt: 'Não foi possível ler os pedidos de acesso (' + Store.pedErro + '). Confira se as regras de segurança foram publicadas no Firestore.' }) : ''}
     ${Store.pedidos.length ? Store.pedidos.map(p => `<div class="lin"><span style="color:var(--ink)">${esc(p.email)}<br><span class="muted">pediu acesso em ${esc(p.em || '')}</span></span><b><button class="btn sm" data-act="liberar" data-u="${esc(p.uid)}" data-e="${esc(p.email)}">Liberar como motorista</button></b></div>`).join('') : '<p class="muted" style="margin:0 0 8px">Nenhum pedido de acesso pendente.</p>'}
     ${((Store.acesso || {}).motoristas || []).map(u => `<div class="lin"><span style="color:var(--ink)">${esc(((Store.acesso.emails || {})[u]) || u)}<br><span class="muted">motorista com acesso</span></span><b><button class="btn pg sm" data-act="revogar" data-u="${esc(u)}">Remover</button></b></div>`).join('')}
+    <button class="btn sec sm" data-act="ver-pedidos" style="margin-top:10px">Verificar pedidos agora</button>
     <h2 style="margin-top:14px">Enviar o app ao motorista</h2>
     <div class="f"><label for="w-tel">WhatsApp (opcional, com DDD)</label><input id="w-tel" inputmode="tel" placeholder="11 99999-9999"></div>
     <div class="row"><a class="btn" id="w-link" target="_blank" rel="noopener" href="${zap('')}">Enviar por WhatsApp</a><button class="btn sec" data-act="copiar-link">Copiar link</button></div>
@@ -362,9 +365,11 @@ const ACT = {
   entrar: () => auth('signInWithEmailAndPassword'), criar: () => auth('createUserWithEmailAndPassword'),
   reset: () => { const e = $('#a-email').value.trim(); if (!e) return toast('Informe o e-mail.'); Store.auth.sendPasswordResetEmail(e).then(() => toast('Enviamos um e-mail para redefinir a senha.')).catch(x => toast(ERR[x.code] || 'Não foi possível enviar.')); },
   sair: () => Store.auth.signOut(),
+  repedir: () => Store.fs.doc('pedidos/' + Store.user.uid).set({ email: Store.user.email || '', em: agora().iso }).then(() => { Store.pedOk = true; Store.pedErro = ''; toast('Pedido enviado.'); render(); }).catch(e => { Store.pedErro = (e && e.code) || 'erro'; render(); }),
   assumir: () => Store.fs.doc('config/acesso').set({ empregador: Store.user.uid, motoristas: [], emails: {}, criadoEm: agora().iso }).catch(() => toast('Não foi possível assumir. Outra conta já é a responsável.')),
   liberar: el => { const a = clone(Store.acesso), u = el.dataset.u; a.motoristas = [...new Set([...(a.motoristas || []), u])]; a.emails = Object.assign({}, a.emails, { [u]: el.dataset.e }); Store.fs.doc('config/acesso').set(a).then(() => Store.fs.doc('pedidos/' + u).delete()).then(() => toast('Acesso liberado.')).catch(() => toast('Não foi possível liberar.')); },
   revogar: el => { const a = clone(Store.acesso), u = el.dataset.u; a.motoristas = (a.motoristas || []).filter(x => x !== u); Store.fs.doc('config/acesso').set(a).then(() => toast('Acesso removido.')); },
+  'ver-pedidos': () => Store.fs.collection('pedidos').get().then(q => { const l = []; q.forEach(d => l.push(Object.assign({ uid: d.id }, d.data()))); Store.pedidos = l; Store.pedErro = ''; toast(l.length ? l.length + ' pedido(s) encontrado(s).' : 'Nenhum pedido de acesso encontrado.'); render(); }).catch(e => { Store.pedErro = (e && e.code) || 'erro'; toast('Erro ao ler pedidos: ' + Store.pedErro); render(); }),
   backup: () => Store.dl.save({ filename: 'horas-extras-backup-' + agora().date + '.json', data: JSON.stringify({ cfg: S.cfg, regs: Object.values(S.regs) }) }),
   'copiar-link': async () => { try { await navigator.clipboard.writeText(APP_URL); toast('Link copiado.'); } catch (e) { toast('Copie o link mostrado abaixo.'); } },
   perfil: () => { S.perfil = moto() ? 'empregador' : 'motorista'; ir('inicio'); },
