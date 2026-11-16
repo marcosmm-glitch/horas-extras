@@ -1,0 +1,24 @@
+const E = require('./engine.js'), assert = require('assert');
+const cfg = (x) => Object.assign({ salarios: [{ desde: '2000-01', valor: 4000 }], divisor: 200 }, x || {});
+const R = (date, ...ps) => ({ date, periodos: ps.map(([ini, fim]) => ({ ini, fim })), status: 'aprovado' });
+const near = (a, b) => assert.ok(Math.abs(a - b) < 0.006, 'esperado ' + b + ', obtido ' + a);
+let n = 0; const t = (nome, fn) => { fn(); n++; console.log('ok  ' + nome); };
+t('Hora normal = R$ 20,00 (4.000 ÷ 200)', () => near(E.horaDe(cfg(), '2026-08'), 20));
+t('Dia útil 16:00–21:00: 5h a 50% = R$ 150,00', () => { const r = E.calcDia(R('2026-08-03', ['16:00', '21:00']), cfg()); assert.equal(r.min50, 300); near(r.total, 150); });
+t('Sábado 09:00–16:30: 7h30 a 50% = R$ 225,00', () => near(E.calcDia(R('2026-07-11', ['09:00', '16:30']), cfg()).total, 225));
+t('Domingo 12:30–17:00: 4h30 a 100% = R$ 180,00', () => { const r = E.calcDia(R('2026-07-19', ['12:30', '17:00']), cfg()); assert.equal(r.min100, 270); near(r.total, 180); });
+t('Feriado (Corpus Christi) 17:30–22:00: 100%', () => near(E.calcDia(R('2026-06-04', ['17:30', '22:00']), cfg()).total, 180));
+t('Após a meia-noite 100% (regra da casa, sem piso)', () => { const r = E.calcDia(R('2026-05-15', ['23:00', '03:00']), cfg()); assert.equal(r.min50, 60); assert.equal(r.min100, 180); near(r.total, 30 + 120); });
+t('Piso noturno legal: 22h–5h nunca abaixo de hora reduzida + 20%', () => { const r = E.calcDia(R('2026-05-15', ['23:00', '03:00']), cfg({ pisoNoturno: true })); const leg = 8 / 7 * 20 * 1.2 * 1.5; near(r.total, 4 * leg); near(r.compl, 4 * leg - 150); });
+t('Sábado que vira domingo: após a meia-noite é domingo (100%)', () => { const r = E.calcDia(R('2026-06-20', ['19:00', '02:00']), cfg()); assert.equal(r.min50, 300); assert.equal(r.min100, 120); near(r.total, 150 + 80); });
+t('Domingo à noite com piso legal em dobro', () => { const r = E.calcDia(R('2026-06-14', ['20:00', '23:30']), cfg({ pisoNoturno: true })); near(r.total, 2 * 40 + 1.5 * 8 / 7 * 20 * 1.2 * 2); });
+t('Dois períodos no mesmo dia e alerta de sobreposição', () => { near(E.calcDia(R('2026-08-03', ['05:00', '07:00'], ['16:00', '18:00']), cfg()).total, 120); assert.ok(E.calcDia(R('2026-08-03', ['16:00', '18:00'], ['17:00', '19:00']), cfg()).alertas.length); });
+t('Mês: compensação desconta horas de 50% e DSR é calculado', () => {
+  const regs = { '2026-06-23': R('2026-06-23', ['16:00', '21:00']), '2026-06-24': { date: '2026-06-24', periodos: [], comp: 30, status: 'aprovado' } };
+  const m = E.calcMes('2026-06', regs, cfg({ dsr: true })); assert.equal(m.compUsado, 30); near(m.base, 150 - 15); assert.equal(m.descanso, 5); near(m.dsr, 135 / 25 * 5); near(m.total, 135 + 27);
+  near(E.calcMes('2026-06', regs, cfg()).total, 135);
+});
+t('Lançamento anulado não entra', () => near(E.calcMes('2026-08', { '2026-08-03': Object.assign(R('2026-08-03', ['16:00', '21:00']), { anulado: true }) }, cfg()).total, 0));
+t('Mudança de salário altera o valor da hora', () => { const c = cfg(); c.salarios.push({ desde: '2026-09', valor: 4400 }); near(E.horaDe(c, '2026-08'), 20); near(E.horaDe(c, '2026-09'), 22); });
+t('Alteração de aprovado exige justificativa e preserva o original', () => { const a = Object.assign(R('2026-08-03', ['16:00', '21:00']), { hist: [] }); assert.throws(() => E.registrarAlteracao(a, R('2026-08-03', ['16:00', '20:00']), 'empregador', '', 't')); const nv = E.registrarAlteracao(a, R('2026-08-03', ['16:00', '20:00']), 'empregador', 'Ajuste', 't'); assert.equal(nv.hist[0].antes.periodos[0].fim, '21:00'); });
+console.log('\n' + n + ' testes aprovados\n');
