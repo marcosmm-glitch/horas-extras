@@ -289,6 +289,7 @@ function render() {
     ${S.aviso ? alerta({ nivel: 'vermelho', txt: S.aviso }) : ''}${S.carregando ? '<p class="muted">Carregando dados…</p>' : ''}${v[1]()}`;
   $('nav.bot div').innerHTML = Object.keys(VIEWS).map(k => `<button data-act="ir" data-v="${k}" class="${S.view === k ? 'on' : ''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>${k === 'gestao' && moto() ? 'Histórico' : VIEWS[k][0]}${k === 'gestao' && !moto() && pendentes().length ? ' (' + pendentes().length + ')' : ''}</button>`).join('');
 }
+const _render = render; render = function () { _render(); ofereceImport(); };
 function ir(v) { S.view = v; S.dirty = false; if (v !== 'lancar') S.draft = null; try { if (location.hash !== '#' + v) location.hash = v; } catch (e) { } render(); window.scrollTo(0, 0); }
 
 async function exportar(ym, fmt) {
@@ -316,14 +317,31 @@ async function exportar(ym, fmt) {
 }
 
 function auth(m) { const e = $('#a-email').value.trim(), p = $('#a-senha').value; if (!e || !p) return toast('Informe e-mail e senha.'); Store.auth[m](e, p).catch(x => toast(ERR[x.code] || 'Não foi possível entrar (' + (x.code || 'erro') + ').')); }
+async function importarDados(j) {
+  const regs = j.regs || [], lote = [];
+  for (const r of regs) if (r && /^\d{4}-\d\d-\d\d$/.test(r.date)) lote.push(r);
+  for (let i = 0; i < lote.length; i += 400) { const b = Store.fs.batch(); lote.slice(i, i + 400).forEach(r => b.set(Store.fs.doc('he/' + r.date), r)); await b.commit(); }
+  if (j.cfg) { const c = merge(Object.assign({}, S.cfg, j.cfg)); c.pct = Object.assign({}, S.cfg.pct, j.cfg.pct || {}); c.pagamentos = Object.assign({}, S.cfg.pagamentos, j.cfg.pagamentos || {}); S.cfg = c; await Store.saveCfg(); }
+  return lote.length;
+}
 async function importar(file) {
+  try { const n = await importarDados(JSON.parse(await file.text())); toast(n + ' lançamentos importados.'); render(); } catch (e) { toast('Arquivo inválido ou sem permissão para importar.'); }
+}
+// Importação por link: o histórico fica cifrado (AES-256-GCM) e a chave vem só no link, que não é enviado a nenhum servidor.
+let IMP_KEY = (location.hash.match(/^#imp-([A-Za-z0-9_-]{40,})$/) || [])[1] || '';
+function ofereceImport() {
+  if (!IMP_KEY || Store.fase !== 'ok' || !Store.dono || $('#modal').classList.contains('on')) return;
+  modal('<h2 style="margin:0 0 10px">Importar o histórico</h2><p>Importar os lançamentos e pagamentos de abril a agosto de 2026 para este app?</p><div class="row"><button class="btn" data-act="imp-link">Importar agora</button><button class="btn sec" data-act="imp-nao">Agora não</button></div>');
+}
+async function importarLink() {
+  const k = IMP_KEY; IMP_KEY = ''; closeModal(); toast('Importando…');
   try {
-    const j = JSON.parse(await file.text()), regs = j.regs || [], lote = [];
-    for (const r of regs) if (r && /^\d{4}-\d\d-\d\d$/.test(r.date)) lote.push(r);
-    for (let i = 0; i < lote.length; i += 400) { const b = Store.fs.batch(); lote.slice(i, i + 400).forEach(r => b.set(Store.fs.doc('he/' + r.date), r)); await b.commit(); }
-    if (j.cfg) { const c = merge(Object.assign({}, S.cfg, j.cfg)); c.pagamentos = Object.assign({}, S.cfg.pagamentos, j.cfg.pagamentos || {}); S.cfg = c; await Store.saveCfg(); }
-    toast(lote.length + ' lançamentos importados.'); render();
-  } catch (e) { toast('Arquivo inválido ou sem permissão para importar.'); }
+    const raw = Uint8Array.from(atob(k.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    const buf = new Uint8Array(await (await fetch('historico.enc', { cache: 'no-store' })).arrayBuffer());
+    const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+    const txt = new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, key, buf.slice(12)));
+    const n = await importarDados(JSON.parse(txt)); toast(n + ' lançamentos importados.'); S.view = 'gestao'; render();
+  } catch (e) { toast('Não foi possível importar por este link.'); }
 }
 const dec = v => { v = String(v || '').trim().replace(/\./g, '').replace(',', '.'); const x = parseFloat(v); return isFinite(x) ? x : 0; };
 function lerForm() {
@@ -370,6 +388,7 @@ const ACT = {
   liberar: el => { const a = clone(Store.acesso), u = el.dataset.u; a.motoristas = [...new Set([...(a.motoristas || []), u])]; a.emails = Object.assign({}, a.emails, { [u]: el.dataset.e }); Store.fs.doc('config/acesso').set(a).then(() => Store.fs.doc('pedidos/' + u).delete()).then(() => toast('Acesso liberado.')).catch(() => toast('Não foi possível liberar.')); },
   revogar: el => { const a = clone(Store.acesso), u = el.dataset.u; a.motoristas = (a.motoristas || []).filter(x => x !== u); Store.fs.doc('config/acesso').set(a).then(() => toast('Acesso removido.')); },
   'ver-pedidos': () => Store.fs.collection('pedidos').get().then(q => { const l = []; q.forEach(d => l.push(Object.assign({ uid: d.id }, d.data()))); Store.pedidos = l; Store.pedErro = ''; toast(l.length ? l.length + ' pedido(s) encontrado(s).' : 'Nenhum pedido de acesso encontrado.'); render(); }).catch(e => { Store.pedErro = (e && e.code) || 'erro'; toast('Erro ao ler pedidos: ' + Store.pedErro); render(); }),
+  'imp-link': importarLink, 'imp-nao': () => { IMP_KEY = ''; closeModal(); },
   backup: () => Store.dl.save({ filename: 'horas-extras-backup-' + agora().date + '.json', data: JSON.stringify({ cfg: S.cfg, regs: Object.values(S.regs) }) }),
   'copiar-link': async () => { try { await navigator.clipboard.writeText(APP_URL); toast('Link copiado.'); } catch (e) { toast('Copie o link mostrado abaixo.'); } },
   perfil: () => { S.perfil = moto() ? 'empregador' : 'motorista'; ir('inicio'); },
@@ -401,7 +420,7 @@ const onInput = e => {
   if (el.dataset.k) { lerForm(); S.dirty = true; const p = $('#preview'); if (p) p.innerHTML = previewHTML(S.draft); }
 };
 document.addEventListener('input', onInput); document.addEventListener('change', onInput);
-window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (VIEWS[v] && v !== S.view) { S.view = v; S.dirty = false; render(); } });
+window.addEventListener('hashchange', () => { const mk = location.hash.match(/^#imp-([A-Za-z0-9_-]{40,})$/); if (mk) { IMP_KEY = mk[1]; try { location.hash = 'inicio'; } catch (e) { } return render(); } const v = location.hash.slice(1); if (VIEWS[v] && v !== S.view) { S.view = v; S.dirty = false; render(); } });
 try { const t = localStorage.getItem('he.tema'); document.documentElement.dataset.tema = t || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'escuro' : 'claro'); } catch (e) { }
 { const v = location.hash.slice(1); if (VIEWS[v]) S.view = v; else if (v === 'historico') S.view = 'gestao'; }
 window.__he = { S, Store, render, invalidate };
