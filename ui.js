@@ -18,7 +18,7 @@ function agora() {
 const clone = o => JSON.parse(JSON.stringify(o));
 const CFG0 = { empregado: '', salarios: [{ desde: '2000-01', valor: 0 }], divisor: 200, fimExpediente: '16:00',
   pct: { normal: 50, madrugada: 100, domingo: 100, feriado: 100 }, pisoNoturno: false, dsr: false, feriadosExtras: [], feriadosRemovidos: [], pagamentos: {}, totaisMes: {} };
-const merge = c => { const m = Object.assign(clone(CFG0), c || {}); m.pct = Object.assign(clone(CFG0.pct), (c && c.pct) || {}); return m; };
+const merge = c => { const m = Object.assign(clone(CFG0), c || {}); m.pct = Object.assign(clone(CFG0.pct), (c && c.pct) || {}); m.pisoNoturno = true; m.dsr = true; m.pct.normal = Math.max(50, +m.pct.normal || 0); m.pct.domingo = Math.max(100, +m.pct.domingo || 0); m.pct.feriado = Math.max(100, +m.pct.feriado || 0); return m; };
 
 const hoje0 = agora();
 const S = { cfg: merge(null), regs: {}, view: 'inicio', ym: hoje0.date.slice(0, 7), date: hoje0.date, perfil: 'empregador', draft: null, dirty: false, aviso: '', carregando: false, aberto: null };
@@ -136,7 +136,7 @@ function vInicio() {
   <div class="card"><h2>Resumo de ${mesNome(S.ym)}</h2>${resumoLinhas(m)}
     <div class="mem"><div><b>Valor da hora</b><br><code>${brl(m.salario)} ÷ ${S.cfg.divisor} = ${brl(m.hora)} · 50% = ${brl(m.hora * 1.5)} · 100% = ${brl(m.hora * 2)}</code><small>${E.FONTES.hora}</small></div></div>
     <div style="margin-top:12px">${pg ? `<span class="chip">Pago em ${esc(pgTxt(pg))} · ${brl(pg.valor)}</span>` : m.total > 0 ? '<span class="chip am">Pagamento em aberto</span> <button class="btn sec sm" data-act="ir" data-v="gestao">Confirmar em Gestão</button>' : ''}</div></div>
-  ${dif > 0.009 ? `<div class="al azul"><div>Pelo cálculo legal completo, este mês teria mais <b>${brl(dif)}</b>: adicional noturno das 22h às 5h e reflexo no descanso semanal (DSR). Hoje o app aplica só a sua regra de 50% e 100%. Para incluir, ative em Ajustes.<small>${E.FONTES.noturno} · ${E.FONTES.dsr}</small></div></div>` : ''}
+  ${false && dif > 0.009 ? `<div class="al azul"><div>Pelo cálculo legal completo, este mês teria mais <b>${brl(dif)}</b>: adicional noturno das 22h às 5h e reflexo no descanso semanal (DSR). Hoje o app aplica só a sua regra de 50% e 100%. Para incluir, ative em Ajustes.<small>${E.FONTES.noturno} · ${E.FONTES.dsr}</small></div></div>` : ''}
   ${m.t.acima2h ? alerta({ nivel: 'amarelo', txt: m.t.acima2h + ' dia(s) úteis com mais de 2 horas extras neste mês.', fonte: E.FONTES.limite }) : ''}
   <div class="card"><h2>Horas extras por dia</h2>${m.t.min ? grafico(m) : '<p class="muted">Nenhuma hora extra lançada neste mês.</p>'}</div>
   <div class="card"><h2>Últimos 6 meses</h2>${meses.map(y => { const x = M(y); return `<div class="bars"><span>${mesCurto(y)}</span><i style="width:${Math.max(1, x.total / mx * 42)}%"></i><b>${brl(x.total)} · ${H(x.t.min)}${S.cfg.pagamentos[y] ? ' · pago' : ''}</b></div>`; }).join('')}
@@ -259,8 +259,9 @@ function vAjustes() {
     <h2 style="margin-top:14px">Adicionais (%)</h2>
     <div class="row">${pin('normal', 'Hora extra comum')}${pin('madrugada', 'Após a meia-noite (0h–5h)')}</div><div class="row">${pin('domingo', 'Domingo')}${pin('feriado', 'Feriado')}</div>
     <h2 style="margin-top:6px">Itens legais opcionais</h2>
-    ${chk('pisoNoturno', 'Garantir o adicional noturno legal das 22h às 5h', 'Paga o maior valor entre a sua regra e a hora noturna reduzida com 20% de adicional.')}
-    ${chk('dsr', 'Incluir o reflexo das horas extras no descanso semanal (DSR)', 'Horas extras habituais refletem no repouso remunerado.')}
+    <div class="lin"><span>Adicional noturno legal, 22h às 5h (hora de 52min30s + 20%)</span><b>Sempre aplicado</b></div>
+    <div class="lin"><span>Reflexo das horas extras no descanso semanal (DSR)</span><b>Sempre aplicado</b></div>
+    <p class="nota">Mínimos da LC 150/2015 e da Súmula 172 do TST: não podem ser desligados. Os percentuais acima só podem ser aumentados.</p>
     <button class="btn full" data-act="salvar-cfg">Salvar ajustes</button></div>
   <div class="card"><h2>Feriados de ${y}</h2>${Object.keys(fer).sort().map(d => `<div class="lin"><span style="color:var(--ink)">${dBR(d).slice(0, 5)} · ${esc(fer[d])}</span><b><button class="btn sec sm" data-act="fer-del" data-d="${d}">Remover</button></b></div>`).join('')}
     <div class="row" style="margin-top:10px"><div class="f"><label for="f-d">Data</label><input type="date" id="f-d"></div><div class="f"><label for="f-n">Nome</label><input id="f-n" placeholder="Ex.: feriado municipal"></div></div>
@@ -418,7 +419,7 @@ const ACT = {
     const c = S.cfg, antes = E.salarioEm(c, S.ym);
     document.querySelectorAll('#form-cfg [data-cfg]').forEach(el => { const k = el.dataset.cfg; c[k] = el.type === 'checkbox' ? el.checked : k === 'divisor' ? Math.max(1, parseInt(el.value, 10) || 200) : el.value; });
     document.querySelectorAll('#form-cfg [data-pct]').forEach(el => { c.pct[el.dataset.pct] = Math.max(0, dec(el.value)); });
-    if (c.pct.normal < 50) { c.pct.normal = 50; toast('O adicional mínimo legal de hora extra é 50%.'); }
+    if (c.pct.normal < 50 || c.pct.domingo < 100 || c.pct.feriado < 100) toast('Percentual abaixo do mínimo legal: mantido o mínimo.'); c.pct.normal = Math.max(50, c.pct.normal); c.pct.domingo = Math.max(100, c.pct.domingo); c.pct.feriado = Math.max(100, c.pct.feriado); c.pisoNoturno = true; c.dsr = true;
     const sal = dec($('#c-sal').value), desde = $('#c-sald').value || S.ym;
     if (sal > 0 && Math.abs(sal - antes) > 0.004) { c.salarios = c.salarios.filter(s => s.desde !== desde); c.salarios.push({ desde, valor: sal }); if (!c.salarios.some(s => s.desde === '2000-01')) c.salarios.push({ desde: '2000-01', valor: antes }); }
     Store.saveCfg(); toast('Ajustes salvos.'); render();
